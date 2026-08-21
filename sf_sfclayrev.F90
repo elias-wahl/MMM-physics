@@ -6,8 +6,21 @@
  private
  public:: sf_sfclayrev_run,     &
           sf_sfclayrev_init,    &
-          sf_sfclayrev_finalize
+          sf_sfclayrev_finalize,&
+          sf_sfclayrev_set_limits
 
+!--- loose physical bounds on the stable surface layer (set from the namelist through
+!    sf_sfclayrev_set_limits; defaults reproduce the scheme as it was):
+!    zol_max_lim  -- cap on z/L in stable conditions. Monin-Obukhov similarity is an
+!                    extrapolation beyond Ri_b ~ 0.2; with the full Cheng-Brutsaert functions
+!                    the exchange coefficients keep falling toward zero as the skin cools, the
+!                    surface decouples, the skin cools further (measured 2026-08-21: skin 20-37 K
+!                    below the air at 8 m on shaded slopes with u* 0.01 m s-1, and the scheme then
+!                    produced NaN). z/L = 10 corresponds to Ri_b ~ 0.4 in this scheme: beyond it
+!                    the exchange stays at its z/L = 10 value instead of vanishing.
+!    ust_min_land -- floor on the friction velocity over land (m s-1); the scheme's own is 0.001.
+ real(kind=kind_phys),save:: zol_max_lim  = 1.e30_kind_phys
+ real(kind=kind_phys),save:: ust_min_land = 0.001_kind_phys
 
  real(kind=kind_phys),parameter:: vconvc= 1.
  real(kind=kind_phys),parameter:: czo   = 0.0185
@@ -20,6 +33,18 @@
 
  contains
 
+
+!=================================================================================================================
+ subroutine sf_sfclayrev_set_limits(zol_max,ust_min)
+!=================================================================================================================
+!--- called once at model start (dyn_em/start_em.F) with the namelist values sfclay_zol_max and
+!    sfclay_ust_min; see the module header for what they mean.
+ real,intent(in):: zol_max,ust_min
+
+ if(zol_max.gt.0.) zol_max_lim  = real(zol_max,kind=kind_phys)
+ if(ust_min.ge.0.) ust_min_land = real(ust_min,kind=kind_phys)
+
+ end subroutine sf_sfclayrev_set_limits
 
 !=================================================================================================================
 !>\section arg_table_sf_sfclayrev_init
@@ -393,6 +418,8 @@
        else
           zol(i)=zolri(br(i),za(i),znt(i))
        endif
+!--- loose physical cap on z/L in stable conditions (module header; namelist sfclay_zol_max)
+       zol(i)=min(zol(i),zol_max_lim)
     endif
 !
     if(br(i).lt.0) then
@@ -793,9 +820,9 @@
     q2(i)=qsfc(i)+(qx(i)-qsfc(i))*psiq2/psiq                   
     t2(i) = th2(i)*(psfcpa(i)/p1000mb)**rovcp                     
 !                                                                                
-    if((xland(i)-1.5).lt.0.)then                                            
-       ust(i)=amax1(ust(i),0.001)
-    endif                                                                    
+    if((xland(i)-1.5).lt.0.)then
+       ust(i)=amax1(ust(i),ust_min_land)   ! default 0.001 = the scheme's own floor; namelist sfclay_ust_min
+    endif
     mol(i)=karman*dtg/psit/prt                              
     denomq(i)=psiq
     denomq2(i)=psiq2
@@ -960,6 +987,9 @@
     x1=0.
     x2=5.
  endif
+!--- the function result was undefined on the early returns below (fx1 == fx2 before the
+!    first iteration); give it the neutral value so that path is finite (2026-08-21).
+ zolri=0.
 
  fx1=zolri2(x1,ri,z,z0)
  fx2=zolri2(x2,ri,z,z0)
